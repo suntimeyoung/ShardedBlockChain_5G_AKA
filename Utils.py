@@ -15,7 +15,8 @@ def Single_Signature_Sign(private_key: bytes, buf: bytes):
 
 def Single_Signature_Verify(public_key: bytes, buf: bytes, signature: bytes):
     '''Signature Verification Algorithm for MNO'''
-    print("Verifying signature: ", signature, " with ", public_key, ", message: ", buf)
+    # print("Verifying signature: ", signature, " with ", public_key, ", message: ", buf)
+    print("Verifying signature")
     if SHA256_Hash(buf) == signature:
         return True
     return False
@@ -37,7 +38,7 @@ def Threshold_Signature_Verify(public_key: bytes, buf: bytes, signature: bytes):
 def Total_Signature_Generate(signature_list: list[bytes], buf: bytes):
     """Aggregate the threshold signature"""
     print("Aggregating the threshold signature")
-    return buf
+    return SHA256_Hash(buf)
 
 def Total_Signature_Verify(TPK: bytes, buf: bytes, total_signature: bytes):
     print("Verifying the aggregated total signature")

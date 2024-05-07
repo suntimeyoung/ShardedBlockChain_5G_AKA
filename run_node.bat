@@ -14,7 +14,7 @@ for /L %%i in (0,1,%end_shard_number%) do (
     )
 )
 
-timeout /t 5 /nobreak
+timeout /t 3 /nobreak
 start "" python MNO.py
 
 endlocal
