@@ -37,11 +37,43 @@ class Node:
             print(self._name + ' :Listening on 127.0.0.1:' + str(self._port) + '/SRegister')
             app.router.add_post('/AU_request', self.Handle_AU_Request)
             print(self._name + ' :Listening on 127.0.0.1:' + str(self._port) + '/AU_request')
+            app.router.add_post('/Res_request', self.Handle_Res_Request)
+            print(self._name + ' :Listening on 127.0.0.1:' + str(self._port) + '/Res_request')
 
         app.router.add_post('/Consensus', self.Handle_Propose)
         print(self._name + ' :Listening on 127.0.0.1:' + str(self._port) + '/Consensus')
 
         web.run_app(app, host='127.0.0.1', port=self._port)
+
+    async def Handle_Res_Request(self, request):
+        """Handling response request from AUSF"""
+        print(self._name + ': Handling response request')
+        data = await request.json()
+        # print(data)
+        request = Str_to_Bytes(data['request'])
+        Res = request[:16]
+        H_SUCI = request[16:]
+        if not Single_Signature_Verify(Str_to_Bytes(data['public_key']), request, Str_to_Bytes(data['signature'])):
+            return web.json_response({'Message': 'Your Res_Request signature is illegal.'})
+        K_seaf, check = self.KCom(Res, H_SUCI)
+        if not check:
+            return web.json_response({'Message': 'Your Response is illegal.'})
+        # Broadcast the proposal for Consensus
+        Packaged_Pr = Obj_To_Bytes({'Res_request': request, 'K_seaf': K_seaf})
+        reply = await self.Broadcast_Pr(Packaged_Pr, b'Res_request')
+        # Checking the proposal for consensus
+        if reply['check'] and Total_Signature_Verify(self._total_public_key,
+                                                     reply['title'] + reply['propose'],
+                                                     reply['signature']):
+            print('Consensus Reached, and K_seaf has been generated')
+            return web.json_response({'Message': 'Your Res_Request have been updated.',
+                                      'propose': Bytes_To_Str(reply['propose']),
+                                      'signature': Bytes_To_Str(reply['signature'])})
+        else:
+            print('Consensus Unreached, and Res_Request has been aborted')
+            return web.json_response({'Message': 'Your Res_Request request failed, due to consensus failed.',
+                                      'propose': Bytes_To_Str(reply['propose']),
+                                      'signature': Bytes_To_Str(reply['signature'])})
 
     async def Handle_AU_Request(self, request):
         """Handling authentication request from AUSF"""
@@ -117,28 +149,29 @@ class Node:
         else:
             # Handle the last propose, updating local data
             last_pr = data['last_pr']
-            if last_pr:
+            if last_pr and Total_Signature_Verify(self._total_public_key,
+                                          last_pr['title'] + last_pr['propose'],
+                                          last_pr['vote']):
                 # last_pr = {'title': title,'propose': propose, 'vote': total_signature}
                 # propose = Packaged_pr
+                self.Store_On_Blockchain(last_pr['title'] + last_pr['propose'], last_pr['vote'])
                 match last_pr['title']:
                     case b'SRegister_Pr':
-                        if Total_Signature_Verify(self._total_public_key,
-                                                      last_pr['title'] + last_pr['propose'],
-                                                      last_pr['vote']):
-                            # print('last_pr: ', last_pr['propose'])
-                            # Store the data
-                            last_SRegister_list = Bytes_To_Obj(last_pr['propose'])['SRegister_list']
-                            self.Register_Store(last_SRegister_list)
-                            self.Store_On_Blockchain(last_pr['title'] + last_pr['propose'], last_pr['vote'])
-                            print('Stored successfully')
+                        last_SRegister_list = Bytes_To_Obj(last_pr['propose'])['SRegister_list']
+                        self.Register_Store(last_SRegister_list)
+                        print('SRegister stored successfully')
                     case b'AU_request':
-                        if Total_Signature_Verify(self._total_public_key,
-                                                  last_pr['title'] + last_pr['propose'],
-                                                  last_pr['vote']):
-                            self.Store_On_Blockchain(last_pr['title'] + last_pr['propose'], last_pr['vote'])
-                            request = Bytes_To_Obj(last_pr['propose'])['AU_request']
-                            SUPI = request[:16]
-                            self._challenge_store[SUPI] = SUPI
+                        request = Bytes_To_Obj(last_pr['propose'])['AU_request']
+                        SUPI = request[:16]
+                        self._challenge_store[SUPI] = SUPI
+                        print('Authentication stored successfully')
+                    case b'Res_request':
+                        request = Bytes_To_Obj(last_pr['propose'])['Res_request']
+                        print('Response request received successfully')
+                    case _:
+                        print('Error: unknown title [', last_pr['title'], ']')
+            else:
+                print('Invalid total signature')
             match data['title']:
                 case b'SRegister_Pr':
                     # propose = {'SRegister_list': SRegister_list, 'MT_root': MT.get_root()}
@@ -151,6 +184,7 @@ class Node:
                         print(self._name + ': SRegister_Pr agrees.')
                     else:
                         response['Message'] = 'Propose_Disagree: Illegal register.'
+                        print('Propose_Disagree: Illegal register.')
                 case b'AU_request':
                     # propose = {'AU_request': request, 'AUTN': Bytes_To_Str(AUTN), 'R': Bytes_To_Str(R), 'hxRes': Bytes_To_Str(hxRes)}
                     request = propose['AU_request']
@@ -162,6 +196,19 @@ class Node:
                         print(self._name + ': AU_request agrees.')
                     else:
                         response['Message'] = 'Propose_Disagree: Illegal AU_request.'
+                        print('Propose_Disagree: Illegal AU_request.')
+                case b'Res_request':
+                    # propose = {'Res_request': request, 'K_seaf': K_seaf}
+                    request = propose['Res_request']
+                    Res = request[:16]
+                    H_SUCI = request[16:]
+                    K_seaf, check = self.KCom(Res, H_SUCI)
+                    if check and K_seaf == propose['K_seaf']:
+                        response['Message'] = 'Propose_Agree'
+                        print(self._name + ': Res_request agrees.')
+                    else:
+                        response['Message'] = 'Propose_Disagree: Illegal Res_request.'
+                        print('Propose_Disagree: Illegal Res_request.')
                 case _:
                     response['Message'] = 'Error'
                     print(self._name + ': Pr is NOT valid.')
@@ -244,8 +291,8 @@ class Node:
         """Propose process function"""
         if Res == self._challenge_store[H_SUCI]:
             K_seaf = b'K_seaf'
-            return K_seaf
-        return False
+            return K_seaf, True
+        return b'', False
 
     def Store_On_Blockchain(self, pr: bytes, signature: bytes):
         if len(self._blockchain) == 0:

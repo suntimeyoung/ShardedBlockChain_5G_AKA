@@ -114,7 +114,7 @@ if __name__ == "__main__":
     for SUPI in SUPI_list[:3]:
         asyncio.run(ausf.Send_Authenticate_Request(SUPI, b'sn_public_key', mno))
 
-    # for SUPI in SUPI_list[:3]:
-    #     asyncio.run(ausf.Send_Response_Request())
+    for SUPI in SUPI_list[:3]:
+        asyncio.run(ausf.Send_Response_Request(SUPI, SUPI, SUPI, mno))
 
 
